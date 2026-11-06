@@ -5,8 +5,11 @@
 """
 
 import json
+import random
 from functools import cache
 from pathlib import Path
+from datetime import datetime
+from uuid import uuid4
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 MAX_RESULTS = 3
@@ -77,3 +80,70 @@ def get_lecture_summary(lecture: int) -> str:
         available = sorted(p.stem for p in (DATA_DIR / "lectures").glob("*.md"))
         return f"第{lecture}回の要点はまだありません。用意されている回: {', '.join(available)}"
     return path.read_text(encoding="utf-8")
+
+
+def make_quiz(lecture: int) -> str:
+    """指定した回の用語集から確認問題を1問作成し、問題と答えを返す。
+
+    「第2回の確認問題を出して」のように、
+    講義内容の復習用の問題を求められたときに使う。
+    lectureには講義回の番号を整数で指定する。
+    """
+    # 1. 用語集から指定された講義回の用語を抽出
+    terms = [
+        entry for entry in load_glossary()
+        if entry["lecture"] == lecture
+    ]
+
+    # 2. 該当する用語がない場合
+    if not terms:
+        return f"第{lecture}回に対応する用語は用語集にありません。"
+
+    # 3. 用語をランダムに1つ選ぶ
+    selected = random.choice(terms)
+
+    # 4. 確認問題と答えを作成
+    result = {
+        "question": f"「{selected['term']}」の意味は？",
+        "answer": selected["definition"]
+    }
+
+    # 5. JSON形式の文字列として返す
+    return json.dumps(result, ensure_ascii=False)
+
+
+def save_learning_log(topic: str, content: str) -> str:
+    """学習した内容をlearning_logフォルダに保存する。
+
+    利用者から「学習記録に保存して」「学んだことを記録して」
+    と明示的に依頼されたときに使う。
+    topicには学習テーマ、contentには記録する内容を指定する。
+    このツールはファイルを書き込むため、実行前に利用者の承認が必要。
+    """
+    # 1. 保存する内容を確認
+    topic = topic.strip()
+    content = content.strip()
+
+    if not topic or not content:
+        return "テーマまたは記録内容が空のため、保存できませんでした。"
+
+    # 2. 保存先フォルダを作成
+    log_dir = DATA_DIR.parent / "learning_log"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # 3. 重複しにくいファイル名を作成
+    now = datetime.now()
+    filename = f"{now:%Y%m%d_%H%M%S}_{uuid4().hex[:8]}.md"
+    path = log_dir / filename
+
+    # 4. 保存する文章を作成
+    text = (
+        f"# {topic}\n\n"
+        f"記録日時: {now:%Y-%m-%d %H:%M:%S}\n\n"
+        f"{content}\n"
+    )
+
+    # 5. ファイルに書き込む
+    path.write_text(text, encoding="utf-8")
+
+    return f"学習記録を保存しました: {path}"
