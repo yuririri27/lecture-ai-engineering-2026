@@ -5,11 +5,10 @@
 """
 
 import json
-import random
 from functools import cache
 from pathlib import Path
-from datetime import datetime
-from uuid import uuid4
+
+from app.config import api_error_message
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 MAX_RESULTS = 3
@@ -82,68 +81,48 @@ def get_lecture_summary(lecture: int) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def make_quiz(lecture: int) -> str:
-    """指定した回の用語集から確認問題を1問作成し、問題と答えを返す。
+def search_materials(query: str) -> str:
+    """第1〜3回の本講義資料を検索し、関連ページの本文・タイトル・ページ番号を返す。
 
-    「第2回の確認問題を出して」のように、
-    講義内容の復習用の問題を求められたときに使う。
-    lectureには講義回の番号を整数で指定する。
+    queryに調べたい内容を指定する。
     """
-    # 1. 用語集から指定された講義回の用語を抽出
-    terms = [
-        entry for entry in load_glossary()
-        if entry["lecture"] == lecture
-    ]
+    from google.genai.errors import APIError
+    import sqlite3
+    from app.retrieval import search
 
-    # 2. 該当する用語がない場合
-    if not terms:
-        return f"第{lecture}回に対応する用語は用語集にありません。"
-
-    # 3. 用語をランダムに1つ選ぶ
-    selected = random.choice(terms)
-
-    # 4. 確認問題と答えを作成
-    result = {
-        "question": f"「{selected['term']}」の意味は？",
-        "answer": selected["definition"]
-    }
-
-    # 5. JSON形式の文字列として返す
-    return json.dumps(result, ensure_ascii=False)
+    try:
+        return json.dumps({"results": search(query)}, ensure_ascii=False)
+    except (ValueError, FileNotFoundError, sqlite3.Error) as e:
+        return json.dumps({"error": str(e), "results": []}, ensure_ascii=False)
+    except APIError as e:
+        return json.dumps({"error": api_error_message(e.code), "results": []}, ensure_ascii=False)
 
 
-def save_learning_log(topic: str, content: str) -> str:
-    """学習した内容をlearning_logフォルダに保存する。
+def browse_tree(node_id: str | None = None) -> str:
+    """目次とページの先頭文を返す。ページIDを指定すると全文を返す。
 
-    利用者から「学習記録に保存して」「学んだことを記録して」
-    と明示的に依頼されたときに使う。
-    topicには学習テーマ、contentには記録する内容を指定する。
-    このツールはファイルを書き込むため、実行前に利用者の承認が必要。
+    最初はnode_idを省略する。続いて返されたIDを指定して目次をたどる。
     """
-    # 1. 保存する内容を確認
-    topic = topic.strip()
-    content = content.strip()
+    from app.retrieval import browse_tree as browse
 
-    if not topic or not content:
-        return "テーマまたは記録内容が空のため、保存できませんでした。"
+    try:
+        return json.dumps(browse(node_id), ensure_ascii=False)
+    except (ValueError, OSError) as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
 
-    # 2. 保存先フォルダを作成
-    log_dir = DATA_DIR.parent / "learning_log"
-    log_dir.mkdir(parents=True, exist_ok=True)
 
-    # 3. 重複しにくいファイル名を作成
-    now = datetime.now()
-    filename = f"{now:%Y%m%d_%H%M%S}_{uuid4().hex[:8]}.md"
-    path = log_dir / filename
+def search_graph(query: str) -> str:
+    """資料を検索し、前後ページ・共通用語をたどって関連ページの本文と引用情報を返す。
 
-    # 4. 保存する文章を作成
-    text = (
-        f"# {topic}\n\n"
-        f"記録日時: {now:%Y-%m-%d %H:%M:%S}\n\n"
-        f"{content}\n"
-    )
+    queryに調べたい内容を指定する。
+    """
+    import sqlite3
+    from google.genai.errors import APIError
+    from app.retrieval import search_graph as search
 
-    # 5. ファイルに書き込む
-    path.write_text(text, encoding="utf-8")
-
-    return f"学習記録を保存しました: {path}"
+    try:
+        return json.dumps(search(query), ensure_ascii=False)
+    except (ValueError, OSError, sqlite3.Error) as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+    except APIError as e:
+        return json.dumps({"error": api_error_message(e.code)}, ensure_ascii=False)
